@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# environments
+.env
+venv/
+
+# data
+data/
+*.fasta
+*.fastq
+*.bam
+*.sam
+
+# outputs
+results/
+logs/
+
+# OS
+.DS_Store

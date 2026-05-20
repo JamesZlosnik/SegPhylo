@@ -1,0 +1,12 @@
+name: segvirus_phylo
+# Versions verified May 2026. Update pins as needed when recreating this environment.
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python=3.12
+  - mafft=7.526        # bioconda
+  - iqtree=2.3.5       # bioconda
+  - biopython=1.86     # conda-forge
+  - numpy=2.2.5        # conda-forge
+  - matplotlib=3.10.5  # conda-forge
