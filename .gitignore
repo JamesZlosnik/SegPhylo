@@ -19,3 +19,7 @@ logs/
 
 # OS
 .DS_Store
+
+# nextflow
+.nextflow.log*
+.nextflow/
