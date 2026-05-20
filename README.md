@@ -1,160 +1,210 @@
 # Segmented Virus Phylogenetics Pipeline
 
-A Nextflow (DSL2) pipeline for constructing phylogenetic trees from a
-tri-segmented virus (L, M, S segments). Builds both per-segment trees and a
-single concatenated tree using a partitioned substitution model.
+A Nextflow DSL2 pipeline for tri-segmented virus phylogenetics. It filters L/M/S segment FASTAs, performs reference-guided alignment, masks terminal regions, builds per-segment trees, builds a complete-trio concatenated tree with segment partitions, and renders a barcode-style alignment QC plot.
 
-## Pipeline overview
+The pipeline is designed for segmented viral genomes where a sample may have some segments missing. The concatenated tree is always built from samples present in all three segments, while per-segment trees can optionally include every sample that passes that segment's length threshold.
 
-```
-Input multifastas (L, M, S)  +  root sequences (L, M, S)
-              │
-              ▼
-   FILTER_COMPLETE_SAMPLES
-   Keep only samples present in all three segments.
-   Writes filtering_report.txt.
-              │
-              ▼
-      ADD_OUTGROUP (×3)
-   Prepend root sequence (labelled "OUTGROUP") to each segment.
-              │
-              ▼
-      MAFFT_ALIGN (×3)
-   Align each segment independently.
-              │
-         ┌────┴────┐
-         ▼         ▼
-  IQTREE_SEGMENT  CONCATENATE_ALIGNMENTS
-  Per-segment     Concatenate L+M+S alignments;
-  trees (×3)      generate RAxML partition file.
-                        │
-                        ▼
-               IQTREE_CONCATENATED
-               Full-genome tree with
-               per-segment GTR+G models.
-```
+## Workflow
 
-## Requirements
+```mermaid
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif", "primaryTextColor": "#1f2937", "lineColor": "#64748b"}}}%%
+flowchart TD
+    A["Input FASTAs<br/>L, M, S"]:::input
+    B["Outgroup / reference<br/>L, M, S"]:::input
+    C["Filter samples<br/>length thresholds + dropped strains"]:::filter
+    D1["Complete-trio FASTAs<br/>for concatenated tree"]:::filter
+    D2["Per-segment passing FASTAs<br/>optional tree inputs"]:::filter
+    E["Reference-guided MAFFT<br/>addfragments + keeplength"]:::align
+    F["Terminal masking<br/>default 30 bp / 50 bp"]:::align
+    G["Optional strip OUTGROUP<br/>remove_reference"]:::tree
+    H["Per-segment IQ-TREE2<br/>L, M, S"]:::tree
+    I["Concatenate complete taxa<br/>L -> M -> S"]:::concat
+    J["Partitioned IQ-TREE2<br/>concatenated.nwk"]:::tree
+    K["Barcode alignment QC<br/>PNG + SVG"]:::viz
 
-| Tool       | Minimum version | Notes                        |
-|------------|-----------------|------------------------------|
-| Nextflow   | ≥ 23.04         | DSL2 required                |
-| Python     | ≥ 3.8           | + BioPython                  |
-| MAFFT      | ≥ 7.0           |                              |
-| IQ-TREE2   | ≥ 2.2           | `-B` ultrafast bootstrap     |
+    A --> C
+    B --> E
+    C --> D1
+    C --> D2
+    D1 --> E
+    D2 -. "if --segment_trees_all_passing true" .-> E
+    E --> F
+    F --> G
+    F --> I
+    G --> H
+    F --> H
+    I --> J
+    I --> K
 
-All tools can be managed automatically via the `conda` profile (see below).
-
-## Input format
-
-**Segment multifastas** — headers must follow `>SampleName|SEGMENT`:
-```
->StrainA|L
-ATGCATGC...
->StrainB|L
-ATGCATGC...
+    classDef input fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
+    classDef filter fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    classDef align fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
+    classDef concat fill:#ede9fe,stroke:#7c3aed,stroke-width:1.5px,color:#3b0764;
+    classDef tree fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
+    classDef viz fill:#e0f2fe,stroke:#0284c7,stroke-width:1.5px,color:#0c4a6e;
 ```
 
-**Root sequences** — one file per segment, FASTA or GenBank format (any header/locus name; relabelled `OUTGROUP` internally):
-```
->ReferenceStrain
-ATGCATGC...
-```
-Accepted extensions: `.fasta` `.fa` `.fna` `.fas` `.gb` `.gbk` `.genbank`
-If a GenBank file contains multiple records, the first is used.
-
-## Usage
+## Quick Start
 
 ```bash
 nextflow run main.nf \
     --l_fasta  sequences_L.fasta \
     --m_fasta  sequences_M.fasta \
     --s_fasta  sequences_S.fasta \
-    --root_l   root_L.fasta \
-    --root_m   root_M.fasta \
-    --root_s   root_S.fasta \
-    --outdir   results
+    --root_l   config/outgroup_L.gb \
+    --root_m   config/outgroup_M.gb \
+    --root_s   config/outgroup_S.gb \
+    --outdir   results \
+    -profile   conda
 ```
 
-### With profiles
+Show the built-in help:
 
 ```bash
-# Auto-install tools via conda
-nextflow run main.nf -profile conda [...]
-
-# Run on a SLURM cluster
-nextflow run main.nf -profile slurm [...]
-
-# Combine profiles
-nextflow run main.nf -profile slurm,conda [...]
+nextflow run main.nf --help
 ```
 
-### Override key parameters
+Run in a mode closest to the `hodcroftlab/andv` Nextstrain workflow:
 
 ```bash
-# Use a stricter MAFFT algorithm
---mafft_args "--localpair --maxiterate 1000"
-
-# Change substitution model for per-segment and concatenated trees
---iqtree_model "TVM+F+G4"
-
-# Build per-segment trees from every sample that passes that segment's threshold
---segment_trees_all_passing true
-
-# More bootstrap replicates
---iqtree_boot 5000
+nextflow run main.nf \
+    --l_fasta          sequences_L.fasta \
+    --m_fasta          sequences_M.fasta \
+    --s_fasta          sequences_S.fasta \
+    --root_l           config/outgroup_L.gb \
+    --root_m           config/outgroup_M.gb \
+    --root_s           config/outgroup_S.gb \
+    --remove_reference true \
+    --root             midpoint \
+    --iqtree_model     GTR \
+    --outdir           results_andv \
+    -profile           conda
 ```
 
-> **Note:** The *concatenated* tree uses a partition model with one partition per
-> segment. `--iqtree_model` sets the substitution model used for each partition.
+Build per-segment trees from all samples passing each segment threshold, while keeping the concatenated tree complete-trio only:
 
-## Output structure
-
+```bash
+nextflow run main.nf \
+    --l_fasta                    sequences_L.fasta \
+    --m_fasta                    sequences_M.fasta \
+    --s_fasta                    sequences_S.fasta \
+    --root_l                     config/outgroup_L.gb \
+    --root_m                     config/outgroup_M.gb \
+    --root_s                     config/outgroup_S.gb \
+    --segment_trees_all_passing  true \
+    --outdir                     results_all_segment_samples \
+    -profile                     conda
 ```
+
+## Documentation
+
+| Document | What it covers |
+|----------|----------------|
+| [Pipeline steps](docs/pipeline.md) | Process-by-process explanation of filtering, alignment, masking, tree building, concatenation, and visualization |
+| [Parameters](docs/parameters.md) | Full parameter reference, valid rooting combinations, and example commands |
+| [Outputs](docs/outputs.md) | Published output files and how to interpret them |
+| [Troubleshooting](docs/troubleshooting.md) | Common Nextflow, conda, and rerun issues |
+
+## Inputs
+
+Segment FASTA headers must use `SampleName|SEGMENT`:
+
+```fasta
+>StrainA|L
+ATGCATGC...
+>StrainB|L
+ATGCATGC...
+```
+
+Provide one root/outgroup sequence per segment. FASTA and GenBank inputs are supported:
+
+| Extension | Parsed as |
+|-----------|-----------|
+| `.fasta`, `.fa`, `.fna`, `.fas` | FASTA |
+| `.gb`, `.gbk`, `.genbank` | GenBank |
+
+Optional dropped-strain files are plain text, one sample name per line. Blank lines and lines beginning with `#` are ignored.
+
+## Key Options
+
+| Option | Default | Purpose |
+|--------|---------|---------|
+| `--remove_reference` | `false` | Remove `OUTGROUP` before tree building. Use with `--root midpoint`. |
+| `--root` | `outgroup` | Root using `OUTGROUP` or post-process with midpoint rooting. |
+| `--segment_trees_all_passing` | `false` | Let per-segment trees use all length-passing samples for that segment. |
+| `--iqtree_model` | `GTR+G` | IQ-TREE2 model for per-segment trees and each concatenated partition. |
+| `--iqtree_boot` | `1000` | Ultrafast bootstrap replicates. |
+| `--dropped_strains` | `null` | Exclude named samples before length and completeness filtering. |
+
+See [docs/parameters.md](docs/parameters.md) for the complete reference.
+
+## Outputs
+
+The main result is:
+
+```text
+results/03_trees/concatenated.nwk
+```
+
+The output folder also includes filtered FASTAs, per-segment alignments, per-segment trees, IQ-TREE2 logs, the concatenated partition file, and barcode plots:
+
+```text
 results/
 ├── 01_filtered/
-│   ├── filtered_L.fasta          # Complete-trio, sorted sample sequences
-│   ├── filtered_M.fasta
-│   ├── filtered_S.fasta
-│   ├── segment_filtered_L.fasta  # All L samples passing the L length threshold
-│   ├── segment_filtered_M.fasta
-│   ├── segment_filtered_S.fasta
-│   └── filtering_report.txt      # Retained / discarded sample summary
-│
 ├── 02_alignments/
-│   ├── L_aligned.fasta           # Per-segment MAFFT alignments (incl. OUTGROUP)
-│   ├── M_aligned.fasta
-│   ├── S_aligned.fasta
-│   ├── concatenated_aligned.fasta
-│   └── partitions.txt            # RAxML-style partition file (L, M, S boundaries)
-│
 ├── 03_trees/
-│   ├── concatenated.treefile     ← Primary output: full-genome rooted newick
-│   ├── concatenated.*            # All IQ-TREE2 output files (log, iqtree, etc.)
+│   ├── concatenated.nwk
 │   └── per_segment/
-│       ├── L.treefile
-│       ├── M.treefile
-│       ├── S.treefile
-│       └── *.{log,iqtree,...}
-│
-├── 04_visualization/
-│   ├── alignment_barcode.png     ← Barcode plot (differences vs OUTGROUP)
-│   └── alignment_barcode.svg
-│
-├── pipeline_report.html
-├── pipeline_timeline.html
-└── pipeline_trace.txt
+└── 04_visualization/
+    ├── alignment_barcode.png
+    └── alignment_barcode.svg
 ```
 
-## Notes
+See [docs/outputs.md](docs/outputs.md) for the full file-by-file guide.
 
-- Samples with any missing segment are excluded from the concatenated tree and
-  listed in `filtering_report.txt`.
-- By default, per-segment trees use the same complete-trio sample set as the
-  concatenated tree. Use `--segment_trees_all_passing true` to build each
-  per-segment tree from every sample that passes that segment's length threshold.
-- The `OUTGROUP` sequence appears at the root in all output trees.
-- The partitioned model in the concatenated tree (`partitions.txt`) assigns an
-  independent model to each segment using `--iqtree_model`.
-- Resume a failed run with `nextflow run main.nf -resume [...]` — Nextflow
-  caches completed processes automatically.
+## Requirements
+
+| Tool | Version | Source |
+|------|---------|--------|
+| Nextflow | 23.04 or newer | User-installed |
+| Python | 3.12 | `environment.yml` |
+| Biopython | 1.86 | `environment.yml` |
+| NumPy | 2.2.5 | `environment.yml` |
+| Matplotlib | 3.10.5 | `environment.yml` |
+| MAFFT | 7.526 | `environment.yml` |
+| IQ-TREE2 | 2.3.5 | `environment.yml` |
+
+All tools except Nextflow are managed by the `conda` profile:
+
+```bash
+-profile conda
+```
+
+Cluster execution can be combined with the conda environment:
+
+```bash
+-profile slurm,conda
+```
+
+## Repository Layout
+
+```text
+segvirus_tree/
+├── main.nf
+├── nextflow.config
+├── environment.yml
+├── README.md
+├── docs/
+│   ├── pipeline.md
+│   ├── parameters.md
+│   ├── outputs.md
+│   └── troubleshooting.md
+└── bin/
+    ├── filter_complete_samples.py
+    ├── add_outgroup.py
+    ├── mask_alignment.py
+    ├── strip_outgroup.py
+    ├── midpoint_root.py
+    ├── concatenate_alignments.py
+    └── visualize_alignment.py
+```
