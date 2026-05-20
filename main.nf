@@ -19,8 +19,14 @@ params.label_taxa_max  = 250    // suppress sample labels in barcode plot above 
 params.min_len_l       = 6000   // minimum length for segment L
 params.min_len_m       = 3000   // minimum length for segment M
 params.min_len_s       = 1000   // minimum length for segment S
+params.dropped_strains = null   // optional file of strain names to exclude (one per line)
 params.mask_from_start = 30     // positions to mask from start of each aligned segment
 params.mask_from_end   = 50     // positions to mask from end of each aligned segment
+params.remove_reference = false // remove OUTGROUP from alignment before tree building
+                                // (mirrors augur align --remove-reference)
+params.root            = "outgroup" // tree rooting: "outgroup" or "midpoint"
+params.segment_trees_all_passing = false // build per-segment trees from all
+                                         // length-passing samples for that segment
 params.help            = false
 
 // ============================================================
@@ -51,14 +57,25 @@ def helpMessage() {
     Optional:
         --outdir            Output directory            [default: results]
         --mafft_args        MAFFT alignment arguments  [default: --auto]
-        --iqtree_model      Substitution model for per-segment trees
+        --iqtree_model      Substitution model for per-segment and concatenated trees
                                                         [default: GTR+G]
         --iqtree_boot       Ultrafast bootstrap reps   [default: 1000]
         --min_len_l         Minimum length for segment L [default: 6000]
         --min_len_m         Minimum length for segment M [default: 3000]
         --min_len_s         Minimum length for segment S [default: 1000]
+        --dropped_strains   Optional file of sample names to exclude, one per line
+                            (comment lines starting with '#' are ignored)
         --mask_from_start   Positions to mask from start of each aligned segment [default: 30]
         --mask_from_end     Positions to mask from end of each aligned segment   [default: 50]
+        --remove_reference  Remove OUTGROUP from alignment before tree building  [default: false]
+                            Mirrors augur align --remove-reference
+        --root              Tree rooting method: 'outgroup' or 'midpoint'        [default: outgroup]
+                            'midpoint' mirrors augur refine --root mid_point
+                            Note: --root outgroup requires --remove_reference false
+        --segment_trees_all_passing
+                            Build per-segment trees from all samples passing that
+                            segment's threshold, while concatenated tree still
+                            uses complete trios only                  [default: false]
         --label_taxa_max    Hide sample labels in barcode plot above
                             this number of taxa         [default: 250]
 
@@ -87,6 +104,8 @@ def helpMessage() {
 
 /*
  * Filter: retain only samples present in all three segments (L, M, S).
+ * Also emits per-segment files containing all samples that pass the threshold
+ * for that segment, for optional per-segment tree building.
  * Expects headers in the format:  >SampleName|SEGMENT
  * Produces a filtering report listing retained and discarded samples.
  */
@@ -98,22 +117,28 @@ process FILTER_COMPLETE_SAMPLES {
     path l_fasta
     path m_fasta
     path s_fasta
+    path dropped_strains
 
     output:
     path "filtered_L.fasta",     emit: l
     path "filtered_M.fasta",     emit: m
     path "filtered_S.fasta",     emit: s
+    path "segment_filtered_L.fasta", emit: segment_l
+    path "segment_filtered_M.fasta", emit: segment_m
+    path "segment_filtered_S.fasta", emit: segment_s
     path "filtering_report.txt", emit: report
 
     script:
+    def drop_arg = dropped_strains.name != 'NO_FILE' ? "--dropped_strains ${dropped_strains}" : ""
     """
-    filter_complete_samples.py \\
+    python ${projectDir}/bin/filter_complete_samples.py \\
         --l_fasta   ${l_fasta} \\
         --m_fasta   ${m_fasta} \\
         --s_fasta   ${s_fasta} \\
         --min_len_l ${params.min_len_l} \\
         --min_len_m ${params.min_len_m} \\
-        --min_len_s ${params.min_len_s}
+        --min_len_s ${params.min_len_s} \\
+        ${drop_arg}
     """
 }
 
@@ -137,7 +162,7 @@ process MAFFT_ALIGN {
     script:
     """
     # Write outgroup-only reference fasta (handles FASTA or GenBank input)
-    add_outgroup.py \\
+    python ${projectDir}/bin/add_outgroup.py \\
         --segment      ${segment} \\
         --fasta        ${fasta} \\
         --root_fasta   ${root_fasta} \\
@@ -167,7 +192,7 @@ process MASK_ALIGNMENT {
 
     script:
     """
-    mask_alignment.py \\
+    python ${projectDir}/bin/mask_alignment.py \\
         --alignment       ${alignment} \\
         --segment         ${segment} \\
         --mask_from_start ${params.mask_from_start} \\
@@ -191,17 +216,104 @@ process IQTREE_SEGMENT {
     path "${segment}.*",                         emit: all_files
 
     script:
+    def outgroup_arg = params.root == "outgroup" ? "-o OUTGROUP" : ""
     """
     iqtree2 \\
         -s  ${alignment} \\
         --prefix ${segment} \\
-        -o  OUTGROUP \\
+        ${outgroup_arg} \\
         -m  ${params.iqtree_model} \\
         -B  ${params.iqtree_boot} \\
         -czb -st DNA \\
         --redo \\
         -T  ${task.cpus}
     mv ${segment}.treefile ${segment}.nwk
+    """
+}
+
+/*
+ * Remove the OUTGROUP sequence from an alignment before tree building.
+ * Mirrors augur align --remove-reference. Only invoked when --remove_reference true.
+ */
+process STRIP_OUTGROUP {
+    tag "strip outgroup: ${segment}"
+
+    input:
+    tuple val(segment), path(alignment)
+
+    output:
+    tuple val(segment), path("${segment}_stripped.fasta")
+
+    script:
+    """
+    python ${projectDir}/bin/strip_outgroup.py \\
+        --alignment ${alignment} \\
+        --output    ${segment}_stripped.fasta
+    """
+}
+
+/*
+ * Remove the OUTGROUP sequence from the concatenated alignment before tree building.
+ * Only invoked when --remove_reference true.
+ */
+process STRIP_OUTGROUP_CONCAT {
+    tag "strip outgroup: concatenated"
+
+    input:
+    path alignment
+
+    output:
+    path "concatenated_stripped.fasta"
+
+    script:
+    """
+    python ${projectDir}/bin/strip_outgroup.py \\
+        --alignment ${alignment} \\
+        --output    concatenated_stripped.fasta
+    """
+}
+
+/*
+ * Apply midpoint rooting to a per-segment tree.
+ * Only invoked when --root midpoint.
+ */
+process MIDPOINT_ROOT {
+    tag "midpoint root: ${segment}"
+    publishDir "${params.outdir}/03_trees/per_segment", mode: 'copy'
+
+    input:
+    tuple val(segment), path(tree)
+
+    output:
+    tuple val(segment), path("${segment}.nwk")
+
+    script:
+    """
+    python ${projectDir}/bin/midpoint_root.py \\
+        --tree   ${tree} \\
+        --output ${segment}.nwk
+    """
+}
+
+/*
+ * Apply midpoint rooting to the concatenated tree.
+ * Only invoked when --root midpoint.
+ */
+process MIDPOINT_ROOT_CONCAT {
+    tag "midpoint root: concatenated"
+    publishDir "${params.outdir}/03_trees", mode: 'copy'
+
+    input:
+    path tree
+
+    output:
+    path "concatenated.nwk"
+
+    script:
+    """
+    python ${projectDir}/bin/midpoint_root.py \\
+        --tree   ${tree} \\
+        --output concatenated.nwk
     """
 }
 
@@ -225,16 +337,17 @@ process CONCATENATE_ALIGNMENTS {
 
     script:
     """
-    concatenate_alignments.py \\
+    python ${projectDir}/bin/concatenate_alignments.py \\
         --l_aln ${l_aln} \\
         --m_aln ${m_aln} \\
-        --s_aln ${s_aln}
+        --s_aln ${s_aln} \\
+        --model ${params.iqtree_model}
     """
 }
 
 /*
  * Build the full concatenated IQ-TREE2 tree using a partition model
- * (one GTR+G substitution model per segment).
+ * (one substitution model per segment).
  */
 process IQTREE_CONCATENATED {
     tag "concatenated tree"
@@ -249,12 +362,13 @@ process IQTREE_CONCATENATED {
     path "concatenated.*",    emit: all_files
 
     script:
+    def outgroup_arg = params.root == "outgroup" ? "-o OUTGROUP" : ""
     """
     iqtree2 \\
         -s  ${alignment} \\
         -p  ${partition} \\
         --prefix concatenated \\
-        -o  OUTGROUP \\
+        ${outgroup_arg} \\
         -B  ${params.iqtree_boot} \\
         -czb -st DNA \\
         --redo \\
@@ -282,7 +396,7 @@ process VISUALIZE_ALIGNMENT {
 
     script:
     """
-    visualize_alignment.py \\
+    python ${projectDir}/bin/visualize_alignment.py \\
         --alignment       ${alignment} \\
         --partition       ${partition} \\
         --mask_from_start ${params.mask_from_start} \\
@@ -314,6 +428,18 @@ workflow {
         exit 1
     }
 
+    // Validate root / remove_reference combination
+    if (params.root == "outgroup" && params.remove_reference) {
+        log.error "--root outgroup cannot be used with --remove_reference true: " +
+                  "the OUTGROUP sequence will not be in the alignment for rooting. " +
+                  "Use --root midpoint when removing the reference."
+        exit 1
+    }
+    if (!["outgroup", "midpoint"].contains(params.root)) {
+        log.error "--root must be 'outgroup' or 'midpoint' (got: '${params.root}')"
+        exit 1
+    }
+
     // --- Inputs ---
     l_fasta = Channel.fromPath(params.l_fasta, checkIfExists: true)
     m_fasta = Channel.fromPath(params.m_fasta, checkIfExists: true)
@@ -323,13 +449,23 @@ workflow {
     root_s  = Channel.fromPath(params.root_s,  checkIfExists: true)
 
     // --- Step 1: Filter to complete trios ---
-    FILTER_COMPLETE_SAMPLES(l_fasta, m_fasta, s_fasta)
+    dropped_strains = params.dropped_strains
+        ? Channel.fromPath(params.dropped_strains, checkIfExists: true)
+        : Channel.fromPath("NO_FILE", checkIfExists: false).ifEmpty { file("NO_FILE") }
+
+    FILTER_COMPLETE_SAMPLES(l_fasta, m_fasta, s_fasta, dropped_strains)
 
     // --- Step 2: Pair each filtered segment with its root sequence ---
     // Channels emit: [ segment_label, filtered_fasta ]
-    seg_filtered_ch = FILTER_COMPLETE_SAMPLES.out.l.map { ["L", it] }
+    complete_seg_ch = FILTER_COMPLETE_SAMPLES.out.l.map { ["L", it] }
         .mix( FILTER_COMPLETE_SAMPLES.out.m.map { ["M", it] } )
         .mix( FILTER_COMPLETE_SAMPLES.out.s.map { ["S", it] } )
+
+    all_passing_seg_ch = FILTER_COMPLETE_SAMPLES.out.segment_l.map { ["L", it] }
+        .mix( FILTER_COMPLETE_SAMPLES.out.segment_m.map { ["M", it] } )
+        .mix( FILTER_COMPLETE_SAMPLES.out.segment_s.map { ["S", it] } )
+
+    seg_filtered_ch = params.segment_trees_all_passing ? all_passing_seg_ch : complete_seg_ch
 
     // Channels emit: [ segment_label, root_fasta ]
     root_ch = root_l.map { ["L", it] }
@@ -343,10 +479,24 @@ workflow {
     MAFFT_ALIGN(seg_root_ch)
     MASK_ALIGNMENT(MAFFT_ALIGN.out)
 
-    // --- Step 4: Per-segment trees (on masked alignments) ---
-    IQTREE_SEGMENT(MASK_ALIGNMENT.out)
+    // --- Step 4: Optionally strip OUTGROUP, then build per-segment trees ---
+    def seg_tree_input_ch
+    if (params.remove_reference) {
+        STRIP_OUTGROUP(MASK_ALIGNMENT.out)
+        seg_tree_input_ch = STRIP_OUTGROUP.out
+    } else {
+        seg_tree_input_ch = MASK_ALIGNMENT.out
+    }
+
+    IQTREE_SEGMENT(seg_tree_input_ch)
+
+    if (params.root == "midpoint") {
+        MIDPOINT_ROOT(IQTREE_SEGMENT.out.tree)
+    }
 
     // --- Step 5: Concatenate masked alignments ---
+    // Always concatenate the full (with-OUTGROUP) alignments for visualization.
+    // Tree building uses the stripped version if --remove_reference is set.
     l_aln = MASK_ALIGNMENT.out.filter { it[0] == "L" }.map { it[1] }
     m_aln = MASK_ALIGNMENT.out.filter { it[0] == "M" }.map { it[1] }
     s_aln = MASK_ALIGNMENT.out.filter { it[0] == "S" }.map { it[1] }
@@ -354,12 +504,21 @@ workflow {
     CONCATENATE_ALIGNMENTS(l_aln, m_aln, s_aln)
 
     // --- Step 6: Concatenated tree ---
-    IQTREE_CONCATENATED(
-        CONCATENATE_ALIGNMENTS.out.fasta,
-        CONCATENATE_ALIGNMENTS.out.partition
-    )
+    def concat_tree_input
+    if (params.remove_reference) {
+        STRIP_OUTGROUP_CONCAT(CONCATENATE_ALIGNMENTS.out.fasta)
+        concat_tree_input = STRIP_OUTGROUP_CONCAT.out
+    } else {
+        concat_tree_input = CONCATENATE_ALIGNMENTS.out.fasta
+    }
 
-    // --- Step 7: Barcode alignment visualization ---
+    IQTREE_CONCATENATED(concat_tree_input, CONCATENATE_ALIGNMENTS.out.partition)
+
+    if (params.root == "midpoint") {
+        MIDPOINT_ROOT_CONCAT(IQTREE_CONCATENATED.out.tree)
+    }
+
+    // --- Step 7: Barcode alignment visualization (always with OUTGROUP as reference) ---
     VISUALIZE_ALIGNMENT(
         CONCATENATE_ALIGNMENTS.out.fasta,
         CONCATENATE_ALIGNMENTS.out.partition

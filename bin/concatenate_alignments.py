@@ -19,6 +19,11 @@ def parse_args():
     parser.add_argument("--l_aln", required=True, help="Aligned segment L fasta")
     parser.add_argument("--m_aln", required=True, help="Aligned segment M fasta")
     parser.add_argument("--s_aln", required=True, help="Aligned segment S fasta")
+    parser.add_argument(
+        "--model",
+        default="GTR+G",
+        help="IQ-TREE substitution model to use for each partition [default: GTR+G]",
+    )
     return parser.parse_args()
 
 
@@ -65,14 +70,19 @@ def main():
         if bad:
             raise ValueError(f"Inconsistent alignment length in {seg}: {bad[:5]}")
 
-    # Union of taxa across all segments
+    # The concatenated tree is built only from taxa present in all segments.
+    complete_ids = set(alns["L"]) & set(alns["M"]) & set(alns["S"])
     all_ids = set().union(*[set(alns[seg]) for seg in ["L", "M", "S"]])
+    incomplete_ids = all_ids - complete_ids
+    if not complete_ids:
+        raise ValueError("No taxa are present in all three segment alignments")
 
     # Debug info
     print("=== Input summary ===")
     for seg in ["L", "M", "S"]:
         print(f"{seg}: {len(alns[seg])} sequences (length={lengths[seg]})")
     print(f"Total unique taxa: {len(all_ids)}")
+    print(f"Complete taxa retained for concatenation: {len(complete_ids)}")
 
     # Missing data report
     missing = {
@@ -86,14 +96,14 @@ def main():
     with open("partitions.txt", "w") as fh:
         for seg in ["L", "M", "S"]:
             end = pos + lengths[seg] - 1
-            fh.write(f"GTR+G, {seg} = {pos}-{end}\n")
+            fh.write(f"{args.model}, {seg} = {pos}-{end}\n")
             pos = end + 1
 
-    # Concatenate sequences
+    # Concatenate complete-trio sequences
     records = []
-    for sid in sorted(all_ids):
+    for sid in sorted(complete_ids):
         concat_seq = "".join(
-            alns[seg].get(sid, "-" * lengths[seg]) for seg in ["L", "M", "S"]
+            alns[seg][sid] for seg in ["L", "M", "S"]
         )
         records.append(SeqRecord(Seq(concat_seq), id=sid, name="", description=""))
 
@@ -106,6 +116,11 @@ def main():
         f"{len(records)} taxa, {total_len} sites "
         f"(L={lengths['L']}, M={lengths['M']}, S={lengths['S']})"
     )
+    if incomplete_ids:
+        print(
+            f"Excluded {len(incomplete_ids)} taxa missing one or more segments "
+            "from concatenated alignment."
+        )
 
 
 if __name__ == "__main__":

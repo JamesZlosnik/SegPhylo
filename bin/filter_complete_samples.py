@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """
-Filter multifasta files for a tri-segmented virus to retain only samples
-present in all three segments (L, M, S) and meeting minimum length thresholds.
+Filter multifasta files for a tri-segmented virus.
+
+The complete-trio outputs retain only samples present in all three segments
+(L, M, S) and meeting all segment-specific length thresholds. The per-segment
+outputs retain every sample that passes the threshold for that segment.
 
 Headers must follow the format:  >SampleName|SEGMENT
-Outputs: filtered_L.fasta, filtered_M.fasta, filtered_S.fasta, filtering_report.txt
+Outputs:
+  - filtered_L.fasta, filtered_M.fasta, filtered_S.fasta
+  - segment_filtered_L.fasta, segment_filtered_M.fasta, segment_filtered_S.fasta
+  - filtering_report.txt
 """
 
 import argparse
@@ -23,6 +29,11 @@ def parse_args():
                         help="Minimum length for segment M [default: 3000]")
     parser.add_argument("--min_len_s",  type=int, default=1000,
                         help="Minimum length for segment S [default: 1000]")
+    parser.add_argument(
+        "--dropped_strains",
+        help="Optional file of sample names to exclude, one per line. "
+             "Blank lines and lines beginning with '#' are ignored.",
+    )
     return parser.parse_args()
 
 
@@ -50,16 +61,36 @@ def apply_length_filter(recs, min_len, seg):
     return passing, failed
 
 
+def load_dropped_strains(fpath):
+    if not fpath:
+        return set()
+
+    dropped = set()
+    with open(fpath) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            dropped.add(line)
+    return dropped
+
+
 def main():
     args = parse_args()
 
     min_lengths = {"L": args.min_len_l, "M": args.min_len_m, "S": args.min_len_s}
+    dropped_strains = load_dropped_strains(args.dropped_strains)
 
     raw = {
         "L": load_segment(args.l_fasta),
         "M": load_segment(args.m_fasta),
         "S": load_segment(args.s_fasta),
     }
+
+    if dropped_strains:
+        for seg in ["L", "M", "S"]:
+            for sample in dropped_strains:
+                raw[seg].pop(sample, None)
 
     # Apply per-segment length filters
     segs          = {}
@@ -84,6 +115,11 @@ def main():
         for seg in ["L", "M", "S"]:
             fh.write(f"  {seg}: {len(raw[seg])}\n")
 
+        if dropped_strains:
+            fh.write(f"\nDropped by explicit exclusion list: {len(dropped_strains)}\n")
+            for sample in sorted(dropped_strains):
+                fh.write(f"  {sample}\n")
+
         fh.write("\nFailed minimum length filter:\n")
         any_failed = False
         for seg in ["L", "M", "S"]:
@@ -96,6 +132,10 @@ def main():
 
         fh.write(f"\nRetained (complete trios, length-passing): {len(complete)}\n")
         fh.write(f"Discarded (incomplete or too short):        {len(discarded)}\n")
+
+        fh.write("\nRetained per segment (length-passing):\n")
+        for seg in ["L", "M", "S"]:
+            fh.write(f"  {seg}: {len(segs[seg])}\n")
 
         if discarded:
             fh.write("\nDiscarded samples:\n")
@@ -118,6 +158,14 @@ def main():
         ("S", "filtered_S.fasta"),
     ]:
         records = [segs[seg][s] for s in sorted(complete)]
+        SeqIO.write(records, out_fname, "fasta")
+
+    for seg, out_fname in [
+        ("L", "segment_filtered_L.fasta"),
+        ("M", "segment_filtered_M.fasta"),
+        ("S", "segment_filtered_S.fasta"),
+    ]:
+        records = [segs[seg][s] for s in sorted(segs[seg])]
         SeqIO.write(records, out_fname, "fasta")
 
     n_length = sum(len(v) for v in length_failed.values())

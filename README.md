@@ -95,24 +95,30 @@ nextflow run main.nf -profile slurm,conda [...]
 # Use a stricter MAFFT algorithm
 --mafft_args "--localpair --maxiterate 1000"
 
-# Change substitution model for per-segment trees
+# Change substitution model for per-segment and concatenated trees
 --iqtree_model "TVM+F+G4"
+
+# Build per-segment trees from every sample that passes that segment's threshold
+--segment_trees_all_passing true
 
 # More bootstrap replicates
 --iqtree_boot 5000
 ```
 
-> **Note:** The *concatenated* tree always uses a partition model (one GTR+G per
-> segment). `--iqtree_model` only affects the three per-segment trees.
+> **Note:** The *concatenated* tree uses a partition model with one partition per
+> segment. `--iqtree_model` sets the substitution model used for each partition.
 
 ## Output structure
 
 ```
 results/
 ├── 01_filtered/
-│   ├── filtered_L.fasta          # Filtered, sorted sample sequences
+│   ├── filtered_L.fasta          # Complete-trio, sorted sample sequences
 │   ├── filtered_M.fasta
 │   ├── filtered_S.fasta
+│   ├── segment_filtered_L.fasta  # All L samples passing the L length threshold
+│   ├── segment_filtered_M.fasta
+│   ├── segment_filtered_S.fasta
 │   └── filtering_report.txt      # Retained / discarded sample summary
 │
 ├── 02_alignments/
@@ -142,10 +148,13 @@ results/
 
 ## Notes
 
-- Samples with any missing segment are excluded and listed in `filtering_report.txt`.
+- Samples with any missing segment are excluded from the concatenated tree and
+  listed in `filtering_report.txt`.
+- By default, per-segment trees use the same complete-trio sample set as the
+  concatenated tree. Use `--segment_trees_all_passing true` to build each
+  per-segment tree from every sample that passes that segment's length threshold.
 - The `OUTGROUP` sequence appears at the root in all output trees.
 - The partitioned model in the concatenated tree (`partitions.txt`) assigns an
-  independent GTR+G to each segment, which is more biologically appropriate
-  than a single model across all three segments.
+  independent model to each segment using `--iqtree_model`.
 - Resume a failed run with `nextflow run main.nf -resume [...]` — Nextflow
   caches completed processes automatically.
