@@ -102,6 +102,7 @@ Applied in `VISUALIZE_ALIGNMENT`.
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `--label_taxa_max` | `250` | Maximum number of taxa before sample labels are hidden on the barcode plot. Above this threshold only the OUTGROUP label is shown, with a note on the y-axis. Override to force labels: `--label_taxa_max 600`. |
+| `--highlight_samples` | `null` | Optional plain-text file of sample names to highlight in the tree-plus-alignment plot. Names should match the sample ID before `|SEGMENT`. Blank lines and `#` comments are ignored. Highlighted samples use red labels and tree-tip markers. |
 
 ---
 
@@ -176,6 +177,20 @@ nextflow run main.nf \
     --dropped_strains config/dropped_strains.txt \
     --outdir          results \
     -profile          conda
+```
+
+**Highlight isolates of interest in the tree-plus-alignment plot:**
+```bash
+nextflow run main.nf \
+    --l_fasta            sequences_L.fasta \
+    --m_fasta            sequences_M.fasta \
+    --s_fasta            sequences_S.fasta \
+    --root_l             config/outgroup_L.gb \
+    --root_m             config/outgroup_M.gb \
+    --root_s             config/outgroup_S.gb \
+    --highlight_samples  config/highlight_samples.txt \
+    --outdir             results_highlighted \
+    -profile             conda
 ```
 
 **Build per-segment trees from all length-passing segment samples:**

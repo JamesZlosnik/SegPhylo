@@ -27,6 +27,8 @@ params.remove_reference = false // remove OUTGROUP from alignment before tree bu
 params.root            = "outgroup" // tree rooting: "outgroup" or "midpoint"
 params.segment_trees_all_passing = false // build per-segment trees from all
                                          // length-passing samples for that segment
+params.highlight_samples = null  // optional plain-text file of sample names to
+                                 // highlight in the tree+alignment visualization
 params.help            = false
 
 // ============================================================
@@ -78,6 +80,10 @@ def helpMessage() {
                             uses complete trios only                  [default: false]
         --label_taxa_max    Hide sample labels in barcode plot above
                             this number of taxa         [default: 250]
+        --highlight_samples Optional plain-text file of sample names (one per line)
+                            to highlight in the tree+alignment plot. Highlighted
+                            samples appear with red labels and a star marker on
+                            the tree tips.              [default: null]
 
     Profiles:
         -profile conda          Auto-build conda environment (no defaults channel)
@@ -405,6 +411,43 @@ process VISUALIZE_ALIGNMENT {
     """
 }
 
+
+/*
+ * Tree + barcode-style visualization of the concatenated alignment.
+ * The tree (left panel) is drawn with branch lengths, tips top-to-bottom,
+ * aligned against the barcode alignment (right panel).
+ * Optional --highlight_samples colours those labels in red and marks their
+ * tree tips with a star so samples of interest are easy to locate.
+ * Outputs: alignment_tree.png + alignment_tree.svg
+ */
+process VISUALIZE_ALIGNMENT_TREE {
+    tag "visualize tree"
+    publishDir "${params.outdir}/04_visualization", mode: 'copy'
+
+    input:
+    path alignment
+    path partition
+    path tree
+    path highlight_file
+
+    output:
+    path "alignment_tree.png", emit: png
+    path "alignment_tree.svg", emit: svg
+
+    script:
+    def highlight_arg = highlight_file.name != 'NO_FILE' ? "--highlight_samples ${highlight_file}" : ""
+    """
+    python ${projectDir}/bin/visualize_alignment_tree.py \
+        --alignment       ${alignment} \
+        --partition       ${partition} \
+        --tree            ${tree} \
+        --mask_from_start ${params.mask_from_start} \
+        --mask_from_end   ${params.mask_from_end} \
+        --label_taxa_max  ${params.label_taxa_max} \
+        ${highlight_arg}
+    """
+}
+
 // ============================================================
 // Workflow
 // ============================================================
@@ -514,13 +557,33 @@ workflow {
 
     IQTREE_CONCATENATED(concat_tree_input, CONCATENATE_ALIGNMENTS.out.partition)
 
+    // Resolve the final (rooted) concatenated tree for both visualization and publishing
+    def final_concat_tree_ch
     if (params.root == "midpoint") {
         MIDPOINT_ROOT_CONCAT(IQTREE_CONCATENATED.out.tree)
+        final_concat_tree_ch = MIDPOINT_ROOT_CONCAT.out
+    } else {
+        final_concat_tree_ch = IQTREE_CONCATENATED.out.tree
     }
 
     // --- Step 7: Barcode alignment visualization (always with OUTGROUP as reference) ---
     VISUALIZE_ALIGNMENT(
         CONCATENATE_ALIGNMENTS.out.fasta,
         CONCATENATE_ALIGNMENTS.out.partition
+    )
+
+    // --- Step 8: Tree + barcode alignment visualization ---
+    // Rows in the alignment are reordered to match the tree leaf order so topology
+    // and sequence variation can be read at a glance. Provide --highlight_samples
+    // to mark samples of interest with red labels and star tips in the tree.
+    def highlight_ch = params.highlight_samples
+        ? Channel.fromPath(params.highlight_samples, checkIfExists: true)
+        : Channel.fromPath("NO_FILE", checkIfExists: false).ifEmpty { file("NO_FILE") }
+
+    VISUALIZE_ALIGNMENT_TREE(
+        CONCATENATE_ALIGNMENTS.out.fasta,
+        CONCATENATE_ALIGNMENTS.out.partition,
+        final_concat_tree_ch,
+        highlight_ch
     )
 }

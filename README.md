@@ -1,6 +1,6 @@
 # Segmented Virus Phylogenetics Pipeline
 
-A Nextflow DSL2 pipeline for tri-segmented virus phylogenetics. It filters L/M/S segment FASTAs, performs reference-guided alignment, masks terminal regions, builds per-segment trees, builds a complete-trio concatenated tree with segment partitions, and renders a barcode-style alignment QC plot.
+A Nextflow DSL2 pipeline for tri-segmented virus phylogenetics. It filters L/M/S segment FASTAs, performs reference-guided alignment, masks terminal regions, builds per-segment trees, builds a complete-trio concatenated tree with segment partitions, and renders alignment QC plots with and without the phylogenetic tree.
 
 The pipeline is designed for segmented viral genomes where a sample may have some segments missing. The concatenated tree is always built from samples present in all three segments, while per-segment trees can optionally include every sample that passes that segment's length threshold.
 
@@ -21,6 +21,7 @@ flowchart TD
     I["Concatenate complete taxa<br/>L -> M -> S"]:::concat
     J["Partitioned IQ-TREE2<br/>concatenated.nwk"]:::tree
     K["Barcode alignment QC<br/>PNG + SVG"]:::viz
+    L["Tree + alignment QC<br/>highlight isolates of interest"]:::viz
 
     A --> C
     B --> E
@@ -35,6 +36,8 @@ flowchart TD
     F --> H
     I --> J
     I --> K
+    J --> L
+    I --> L
 
     classDef input fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e3a8a;
     classDef filter fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
@@ -96,10 +99,26 @@ nextflow run main.nf \
     -profile                     conda
 ```
 
+Highlight isolates of interest in the tree-plus-alignment plot:
+
+```bash
+nextflow run main.nf \
+    --l_fasta            sequences_L.fasta \
+    --m_fasta            sequences_M.fasta \
+    --s_fasta            sequences_S.fasta \
+    --root_l             config/outgroup_L.gb \
+    --root_m             config/outgroup_M.gb \
+    --root_s             config/outgroup_S.gb \
+    --highlight_samples  config/highlight_samples.txt \
+    --outdir             results_highlighted \
+    -profile             conda
+```
+
 ## Documentation
 
 | Document | What it covers |
 |----------|----------------|
+| [Usage guide](docs/usage.md) | Practical run recipes, input checks, and common command patterns |
 | [Pipeline steps](docs/pipeline.md) | Process-by-process explanation of filtering, alignment, masking, tree building, concatenation, and visualization |
 | [Parameters](docs/parameters.md) | Full parameter reference, valid rooting combinations, and example commands |
 | [Outputs](docs/outputs.md) | Published output files and how to interpret them |
@@ -123,7 +142,7 @@ Provide one root/outgroup sequence per segment. FASTA and GenBank inputs are sup
 | `.fasta`, `.fa`, `.fna`, `.fas` | FASTA |
 | `.gb`, `.gbk`, `.genbank` | GenBank |
 
-Optional dropped-strain files are plain text, one sample name per line. Blank lines and lines beginning with `#` are ignored.
+Optional dropped-strain and highlighted-sample files are plain text, one sample name per line. Blank lines and lines beginning with `#` are ignored.
 
 ## Key Options
 
@@ -135,6 +154,7 @@ Optional dropped-strain files are plain text, one sample name per line. Blank li
 | `--iqtree_model` | `GTR+G` | IQ-TREE2 model for per-segment trees and each concatenated partition. |
 | `--iqtree_boot` | `1000` | Ultrafast bootstrap replicates. |
 | `--dropped_strains` | `null` | Exclude named samples before length and completeness filtering. |
+| `--highlight_samples` | `null` | Highlight selected samples in `alignment_tree.png/svg` with red labels and tree-tip markers. |
 
 See [docs/parameters.md](docs/parameters.md) for the complete reference.
 
@@ -146,7 +166,7 @@ The main result is:
 results/03_trees/concatenated.nwk
 ```
 
-The output folder also includes filtered FASTAs, per-segment alignments, per-segment trees, IQ-TREE2 logs, the concatenated partition file, and barcode plots:
+The output folder also includes filtered FASTAs, per-segment alignments, per-segment trees, IQ-TREE2 logs, the concatenated partition file, and alignment QC plots:
 
 ```text
 results/
@@ -157,7 +177,9 @@ results/
 │   └── per_segment/
 └── 04_visualization/
     ├── alignment_barcode.png
-    └── alignment_barcode.svg
+    ├── alignment_barcode.svg
+    ├── alignment_tree.png
+    └── alignment_tree.svg
 ```
 
 See [docs/outputs.md](docs/outputs.md) for the full file-by-file guide.
@@ -196,6 +218,7 @@ segvirus_tree/
 ├── README.md
 ├── docs/
 │   ├── pipeline.md
+│   ├── usage.md
 │   ├── parameters.md
 │   ├── outputs.md
 │   └── troubleshooting.md
@@ -206,5 +229,6 @@ segvirus_tree/
     ├── strip_outgroup.py
     ├── midpoint_root.py
     ├── concatenate_alignments.py
-    └── visualize_alignment.py
+    ├── visualize_alignment.py
+    └── visualize_alignment_tree.py
 ```

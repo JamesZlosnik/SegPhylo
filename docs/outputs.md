@@ -48,7 +48,9 @@ results/
 │
 └── 04_visualization/
     ├── alignment_barcode.png
-    └── alignment_barcode.svg
+    ├── alignment_barcode.svg
+    ├── alignment_tree.png
+    └── alignment_tree.svg
 ```
 
 > **Note on `--remove_reference`:** When `--remove_reference true` is set, the OUTGROUP sequence is absent from the `.nwk` tree files. The alignment files in `02_alignments/` always retain the OUTGROUP row, as they are also used for the barcode visualisation.
@@ -198,7 +200,7 @@ Consensus tree with bootstrap support values annotated on branches as percentage
 
 ## 04_visualization/
 
-Output of `VISUALIZE_ALIGNMENT`.
+Outputs of `VISUALIZE_ALIGNMENT` and `VISUALIZE_ALIGNMENT_TREE`.
 
 ### `alignment_barcode.png` / `alignment_barcode.svg`
 
@@ -228,3 +230,11 @@ Barcode-style visualisation of the concatenated alignment. Always includes the O
 For large datasets where labels are hidden, use the row index into `concatenated_aligned.fasta` to identify samples by position.
 
 The PNG is rendered at 150 dpi. The SVG is resolution-independent and recommended for publication or further editing in Inkscape or Illustrator.
+
+### `alignment_tree.png` / `alignment_tree.svg`
+
+Tree-plus-alignment visualisation of the concatenated alignment. The left panel shows the final concatenated tree, and the right panel shows the barcode alignment with rows ordered to match the tree tips.
+
+If `--highlight_samples` is provided, listed samples are emphasized with red labels and tree-tip markers. The highlight file should contain one sample name per line, matching the sample ID before the `|SEGMENT` suffix.
+
+The plot works whether the OUTGROUP is present in the tree or removed with `--remove_reference true`. The alignment panel still uses OUTGROUP as the reference row.
