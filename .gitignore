@@ -23,3 +23,7 @@ logs/
 # nextflow
 .nextflow.log*
 .nextflow/
+
+# AI conding tools
+.antigravitycli/
+CLAUDE.md

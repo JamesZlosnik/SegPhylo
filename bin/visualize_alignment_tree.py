@@ -30,6 +30,7 @@ from matplotlib.colors import ListedColormap
 from Bio import AlignIO, Phylo
 
 HIGHLIGHT_COLOR = "#E53935"   # red for highlighted sample labels / tips
+MASK_COLOR = "#7E57C2"        # purple masked-region overlay, distinct from N
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -295,7 +296,7 @@ def main():
         show_labels = n_rows <= args.label_taxa_max
         label_fs    = 3
 
-    fig_height = max(5, n_rows * row_h + 3.0)
+    fig_height = max(5, n_rows * row_h + 1.8)
 
     # ── Figure layout: tree (left) + alignment (right) ────────────────────────
     fig = plt.figure(figsize=(30, fig_height))
@@ -306,7 +307,7 @@ def main():
         left=0.01,
         right=0.99,
         top=0.92,
-        bottom=0.08,
+        bottom=0.10,
     )
     ax_tree = fig.add_subplot(gs[0])
     ax_aln  = fig.add_subplot(gs[1])
@@ -332,11 +333,11 @@ def main():
         mask_s         = min(args.mask_from_start, seg_len)
         x0 = seg_start / scale - 0.5
         x1 = (seg_start + mask_s) / scale - 0.5
-        ax_aln.axvspan(x0, x1, color="black", alpha=0.20, zorder=3, linewidth=0)
+        ax_aln.axvspan(x0, x1, color=MASK_COLOR, alpha=0.28, zorder=3, linewidth=0)
         mask_e = max(seg_start, seg_end - args.mask_from_end + 1)
         x0 = mask_e / scale - 0.5
         x1 = (seg_end + 1) / scale - 0.5
-        ax_aln.axvspan(x0, x1, color="black", alpha=0.20, zorder=3, linewidth=0)
+        ax_aln.axvspan(x0, x1, color=MASK_COLOR, alpha=0.28, zorder=3, linewidth=0)
 
     # Segment boundary dashed lines and labels
     for seg, (start, end) in sorted(partitions.items(), key=lambda x: x[1][0]):
@@ -345,7 +346,7 @@ def main():
         ax_aln.axvline(x=x_start, color="black", linewidth=1.2,
                        linestyle="--", alpha=0.8, zorder=4)
         ax_aln.text(
-            x_start + (x_end - x_start) / 2, -0.9, seg,
+            x_start + (x_end - x_start) / 2, -0.08, seg,
             ha="center", va="top", fontsize=10, fontweight="bold",
             transform=ax_aln.get_xaxis_transform(),
         )
@@ -389,7 +390,7 @@ def main():
         mpatches.Patch(facecolor="#2196F3", label="C"),
         mpatches.Patch(facecolor="#424242", label="Gap (-)"),
         mpatches.Patch(facecolor="#BDBDBD", label="N / ambiguous"),
-        mpatches.Patch(facecolor="black",   alpha=0.20,
+        mpatches.Patch(facecolor=MASK_COLOR, alpha=0.28,
                        label=f"Masked (±{args.mask_from_start}/{args.mask_from_end} bp)"),
     ]
     if highlight:
@@ -409,7 +410,7 @@ def main():
         fontsize=10,
     )
 
-    plt.savefig("alignment_tree.png", dpi=150, bbox_inches="tight")
+    plt.savefig("alignment_tree.png", dpi=300, bbox_inches="tight")
     plt.savefig("alignment_tree.svg", bbox_inches="tight")
     plt.close()
 
